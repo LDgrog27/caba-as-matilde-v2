@@ -1,4 +1,5 @@
 import { cotizar, mxn } from '../lib/cotizar.js';
+import { cargarOcupadas, nocheOcupada, rangoLibre, hayConflicto, iso } from '../lib/reservas.js';
 
 (function () {
   'use strict';
@@ -53,6 +54,7 @@ import { cotizar, mxn } from '../lib/cotizar.js';
     checkIn: null, checkOut: null, adults: 2, children: 0, pets: false, cabin: 'Casa Águila'
   };
   var LIMITS = { adults: [1, 14], children: [0, 10] };
+  var OCUP = []; // noches ocupadas de la cabaña elegida (Fase 2)
 
   /* ---------- Aparición al hacer scroll y año (corre en todas las páginas) ---------- */
   (function initPage() {
@@ -135,7 +137,23 @@ import { cotizar, mxn } from '../lib/cotizar.js';
   var cabinSelect = document.getElementById('cabinSelect');
   if (cabinSelect) {
     cabinSelect.addEventListener('change', updatePrice);
+    cabinSelect.addEventListener('change', cargarDisp);
   }
+
+  /* ---------- Disponibilidad (Fase 2) ---------- */
+  function cargarDisp() {
+    var sel = document.getElementById('cabinSelect');
+    if (!sel) return Promise.resolve();
+    return cargarOcupadas(sel.value).then(function (o) {
+      OCUP = o;
+      if (S.checkIn && S.checkOut && hayConflicto(OCUP, iso(S.checkIn), iso(S.checkOut))) {
+        S.checkIn = null; S.checkOut = null;
+        showToast('Esas fechas no están disponibles en esta cabaña. Elige otras.');
+      }
+      render();
+    });
+  }
+  document.addEventListener('matilde:reservas', cargarDisp);
 
   function setOpen(which) {
     var wasOpen = S.open;
@@ -188,7 +206,11 @@ import { cotizar, mxn } from '../lib/cotizar.js';
       var isEnd = same(d, S.checkIn) || same(d, S.checkOut);
       b.type = 'button'; b.className = 'day'; b.textContent = n; b.dataset.t = d.getTime();
       b.setAttribute('aria-label', d.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }));
+      var ocupado = nocheOcupada(OCUP, d);
       if (d < today) b.disabled = true;
+      else if (S.open === 'out' && S.checkIn && d > S.checkIn) { if (!rangoLibre(OCUP, S.checkIn, d)) b.disabled = true; }
+      else if (ocupado) b.disabled = true;
+      if (ocupado && d >= today) { b.classList.add('is-busy'); b.title = 'No disponible'; }
       if (same(d, today)) { b.classList.add('is-today'); b.setAttribute('aria-current', 'date'); }
       if (isEnd) { b.classList.add('is-end'); b.setAttribute('aria-pressed', 'true'); }
       if (S.checkIn && S.checkOut && d > S.checkIn && d < S.checkOut) b.classList.add('in-range');
@@ -360,7 +382,7 @@ import { cotizar, mxn } from '../lib/cotizar.js';
 
     var q = cotizar(cabin.precios, nt, DEPOSIT);
     var d = document.body.dataset;
-    var telefono = d.wa;
+    var sel = document.getElementById('cabinSelect');
     var mensaje = `¡Hola! Quiero reservar en Cabañas Matilde 🏡\n\n` +
       `• Cabaña: ${cabin.name}\n` +
       `• Llegada: ${fmt(S.checkIn)} (Check-in ${d.checkin})\n` +
@@ -373,9 +395,17 @@ import { cotizar, mxn } from '../lib/cotizar.js';
       `Mi nombre: [Escribe tu nombre aquí]\n\n` +
       `Quedo atento a la confirmación y a los datos para enviar el adelanto. ¡Gracias!`;
 
-    var url = `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}`;
-    showToast('Abriendo WhatsApp...');
-    window.open(url, '_blank');
+    // Se vuelve a consultar la disponibilidad justo antes de pedir los datos
+    cargarDisp().then(function () {
+      if (!S.checkIn || !S.checkOut) { setOpen('in'); return; }
+      document.dispatchEvent(new CustomEvent('matilde:solicitar', { detail: {
+        cabana: sel.value, cabanaNombre: cabin.name,
+        entrada: iso(S.checkIn), salida: iso(S.checkOut), entradaTxt: fmt(S.checkIn), salidaTxt: fmt(S.checkOut),
+        noches: nt, adultos: S.adults, ninos: S.children, mascotas: S.pets,
+        total: q.total, adelanto: q.adelanto, adelantoPct: DEPOSIT,
+        waUrl: 'https://wa.me/' + d.wa + '?text=' + encodeURIComponent(mensaje)
+      } }));
+    });
   });
 
 
@@ -393,4 +423,5 @@ import { cotizar, mxn } from '../lib/cotizar.js';
   if (wanted) setCabin(wanted);
   else { var first = selectedCabin(); if (first) S.cabin = first.name; }
   render();
+  cargarDisp();
 })();

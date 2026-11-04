@@ -332,6 +332,7 @@ button { font: inherit; }
 }
 .day:hover:not(:disabled):not(.is-end) { background: rgba(var(--ink-rgb), .08); }
 .day:disabled { opacity: .3; cursor: default; }
+.day.is-busy { text-decoration: line-through; text-decoration-thickness: 1px; opacity: .38; }
 .day.is-today { border-color: rgba(218, 83, 44, .6); }
 .day.in-range { background: rgba(218, 83, 44, .18); }
 .day.is-end {

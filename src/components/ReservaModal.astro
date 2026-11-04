@@ -1,0 +1,161 @@
+---
+/* Ventana para enviar la solicitud de reserva (Fase 2).
+   Se abre cuando la barra de reservas dispara el evento "matilde:solicitar". */
+---
+<dialog id="rsv" class="rsv" aria-labelledby="rsvTitle">
+  <button type="button" class="rsv__x round-btn" data-rsv-close aria-label="Cerrar"><i class="ph ph-x" aria-hidden="true"></i></button>
+
+  <!-- Paso 1: datos -->
+  <div id="rsvForm">
+    <div class="kicker">Solicitud de reserva</div>
+    <h2 id="rsvTitle" class="h2">Casi listo</h2>
+    <dl class="rsv__sum" id="rsvSum"></dl>
+
+    <form id="rsvData" novalidate>
+      <label class="rsv__f"><span>Nombre completo</span>
+        <input name="nombre" autocomplete="name" required maxlength="80"></label>
+      <div class="rsv__row">
+        <label class="rsv__f"><span>WhatsApp / teléfono</span>
+          <input name="telefono" type="tel" autocomplete="tel" inputmode="tel" required maxlength="25" placeholder="81 1234 5678"></label>
+        <label class="rsv__f"><span>Correo</span>
+          <input name="email" type="email" autocomplete="email" required maxlength="120" placeholder="tu@correo.com"></label>
+      </div>
+      <label class="rsv__f"><span>Comentarios (opcional)</span>
+        <textarea name="notas" rows="2" maxlength="400" placeholder="Hora aproximada de llegada, celebración, dudas…"></textarea></label>
+      <input name="web" class="rsv__trap" tabindex="-1" autocomplete="off" aria-hidden="true">
+
+      <p class="rsv__err" id="rsvErr" role="alert" hidden></p>
+      <p class="rsv__note">No se cobra nada ahora. Te confirmaremos la disponibilidad y te enviaremos los datos para pagar la seña.</p>
+      <div class="rsv__actions">
+        <button type="submit" class="btn btn--primary" id="rsvSend">Enviar solicitud <i class="ph ph-paper-plane-tilt" aria-hidden="true"></i></button>
+        <a class="btn btn--outline" id="rsvWa" target="_blank" rel="noopener">Prefiero WhatsApp <i class="ph ph-whatsapp-logo" aria-hidden="true"></i></a>
+      </div>
+    </form>
+  </div>
+
+  <!-- Paso 2: listo -->
+  <div id="rsvOk" hidden>
+    <div class="rsv__check"><i class="ph-bold ph-check" aria-hidden="true"></i></div>
+    <h2 class="h2">¡Solicitud enviada!</h2>
+    <p class="rsv__code">Tu código: <strong id="rsvCode"></strong></p>
+    <p id="rsvOkText" class="rsv__lead"></p>
+    <div class="rsv__demo" id="rsvDemo" hidden>
+      <strong>Modo demo</strong>
+      <span>Estás viendo una simulación: la solicitud se guarda solo en este navegador y no se envían correos.</span>
+      <button type="button" class="btn btn--glass" id="rsvSim">Simular que el dueño confirma <i class="ph ph-seal-check" aria-hidden="true"></i></button>
+      <span id="rsvSimOk" hidden>✓ Confirmada: esas fechas ya aparecen ocupadas en el calendario.</span>
+    </div>
+    <div class="rsv__actions">
+      <a class="btn btn--primary" id="rsvWa2" target="_blank" rel="noopener">Avisar por WhatsApp <i class="ph ph-whatsapp-logo" aria-hidden="true"></i></a>
+      <button type="button" class="btn btn--outline" data-rsv-close>Cerrar</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+  import { enviarSolicitud, confirmarDemo } from '../lib/reservas.js';
+
+  const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+  const dlg = $<HTMLDialogElement>('rsv');
+  const mxn = (n: number) => '$' + Math.round(n).toLocaleString('es-MX') + ' MXN';
+  let actual: any = null;
+  let resultado: any = null;
+
+  function abrir(d: any) {
+    actual = d; resultado = null;
+    $('rsvForm').hidden = false; $('rsvOk').hidden = true; $('rsvErr').hidden = true;
+    $('rsvSum').innerHTML = [
+      ['Cabaña', d.cabanaNombre],
+      ['Llegada', d.entradaTxt], ['Salida', d.salidaTxt],
+      ['Noches', String(d.noches)],
+      ['Huéspedes', d.adultos + ' adulto' + (d.adultos > 1 ? 's' : '') + (d.ninos ? ' y ' + d.ninos + ' niño' + (d.ninos > 1 ? 's' : '') : '') + (d.mascotas ? ' · con mascota' : '')],
+      ['Total estimado', mxn(d.total)],
+      ['Seña (' + d.adelantoPct + '%)', mxn(d.adelanto)],
+    ].map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('');
+    ($('rsvWa') as HTMLAnchorElement).href = d.waUrl;
+    dlg.showModal();
+    ($('rsvData') as HTMLFormElement).elements.namedItem('nombre') instanceof HTMLElement &&
+      (($('rsvData') as HTMLFormElement).elements.namedItem('nombre') as HTMLElement).focus();
+  }
+  document.addEventListener('matilde:solicitar', (e) => abrir((e as CustomEvent).detail));
+
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+  dlg.querySelectorAll('[data-rsv-close]').forEach((b) => b.addEventListener('click', () => dlg.close()));
+
+  const error = (msg: string) => { const p = $('rsvErr'); p.textContent = msg; p.hidden = !msg; };
+
+  $('rsvData').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const f = ev.target as HTMLFormElement;
+    const v = (n: string) => ((f.elements.namedItem(n) as HTMLInputElement)?.value || '').trim();
+    if (v('nombre').length < 3) return error('Escribe tu nombre completo.');
+    if (v('telefono').replace(/\D/g, '').length < 8) return error('Escribe un teléfono o WhatsApp válido.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v('email'))) return error('Escribe un correo válido.');
+    error('');
+
+    const btn = $<HTMLButtonElement>('rsvSend');
+    btn.disabled = true;
+    const r = await enviarSolicitud({
+      cabana: actual.cabana, cabanaNombre: actual.cabanaNombre, entrada: actual.entrada, salida: actual.salida,
+      noches: actual.noches, adultos: actual.adultos, ninos: actual.ninos, mascotas: actual.mascotas,
+      total: actual.total, adelanto: actual.adelanto,
+      nombre: v('nombre'), telefono: v('telefono'), email: v('email'), notas: v('notas'), web: v('web'),
+    });
+    btn.disabled = false;
+
+    if (!r.ok) {
+      error(r.error || 'No se pudo enviar. Inténtalo de nuevo o escríbenos por WhatsApp.');
+      if (r.conflicto) document.dispatchEvent(new CustomEvent('matilde:reservas'));
+      return;
+    }
+    resultado = r;
+    $('rsvCode').textContent = r.codigo;
+    $('rsvOkText').textContent = r.demo
+      ? 'Así verá el huésped la confirmación de su solicitud.'
+      : 'Recibimos tu solicitud' + (r.correo ? ' y te enviamos una copia por correo' : '') + '. Te confirmaremos la disponibilidad y los datos para pagar la seña por correo o WhatsApp.';
+    ($('rsvWa2') as HTMLAnchorElement).href = actual.waUrl + encodeURIComponent('\n\nMi código de solicitud: ' + r.codigo);
+    $('rsvDemo').hidden = !r.demo; $('rsvSimOk').hidden = true; $('rsvSim').hidden = false;
+    $('rsvForm').hidden = true; $('rsvOk').hidden = false;
+    f.reset();
+  });
+
+  $('rsvSim').addEventListener('click', () => {
+    if (!resultado?.id) return;
+    confirmarDemo(resultado.id);
+    $('rsvSim').hidden = true; $('rsvSimOk').hidden = false;
+    document.dispatchEvent(new CustomEvent('matilde:reservas'));
+  });
+</script>
+
+<style>
+  .rsv {
+    width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto;
+    padding: clamp(22px, 4vw, 36px); border-radius: 24px; color: var(--ink);
+    border: 1px solid rgba(var(--ink-rgb), .16); background: #1c1013; box-shadow: 0 30px 80px rgba(0, 0, 0, .55);
+  }
+  :global(:root[data-theme="light"]) .rsv { background: #fffafa; box-shadow: 0 30px 80px rgba(122, 26, 44, .2); }
+  .rsv::backdrop { background: rgba(10, 5, 7, .62); backdrop-filter: blur(4px); }
+  .rsv__x { position: absolute; top: 14px; right: 14px; }
+  .rsv .h2 { margin: 6px 0 18px; }
+  .rsv__sum { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; margin: 0 0 22px; padding: 16px 18px; border-radius: 16px; border: 1px solid rgba(var(--ink-rgb), .12); background: rgba(var(--ink-rgb), .05); }
+  .rsv__sum :global(div) { display: grid; gap: 2px; }
+  .rsv__sum :global(dt) { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--kicker); }
+  .rsv__sum :global(dd) { margin: 0; font-size: 14px; }
+  .rsv__f { display: grid; gap: 6px; margin-bottom: 14px; font-size: 12px; letter-spacing: .06em; color: rgba(var(--ink-rgb), .7); }
+  .rsv__f input, .rsv__f textarea {
+    width: 100%; padding: 12px 14px; border-radius: 12px; font: inherit; font-size: 15px; letter-spacing: 0; color: var(--ink);
+    background: rgba(var(--ink-rgb), .06); border: 1px solid rgba(var(--ink-rgb), .18);
+  }
+  .rsv__f input:focus, .rsv__f textarea:focus { outline: 2px solid var(--orange); outline-offset: 1px; }
+  .rsv__row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .rsv__trap { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+  .rsv__err { margin: 0 0 12px; padding: 10px 14px; border-radius: 12px; font-size: 14px; background: rgba(163, 36, 58, .25); border: 1px solid rgba(218, 83, 44, .5); }
+  .rsv__note { margin: 0 0 18px; font-size: 13px; line-height: 1.5; color: rgba(var(--ink-rgb), .65); }
+  .rsv__actions { display: flex; flex-wrap: wrap; gap: 10px; }
+  .rsv__check { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; font-size: 26px; color: #fff8f8; background: var(--grad); margin-bottom: 14px; }
+  .rsv__code { margin: 0 0 10px; font-size: 15px; }
+  .rsv__code strong { font-size: 20px; letter-spacing: .12em; color: var(--soft); }
+  .rsv__lead { margin: 0 0 18px; line-height: 1.6; color: rgba(var(--ink-rgb), .75); }
+  .rsv__demo { display: grid; gap: 10px; justify-items: start; margin: 0 0 20px; padding: 14px 16px; border-radius: 14px; font-size: 13px; line-height: 1.5; border: 1px dashed rgba(218, 83, 44, .6); background: rgba(218, 83, 44, .08); }
+  @media (max-width: 520px) { .rsv__row, .rsv__sum { grid-template-columns: 1fr; } }
+</style>
