@@ -1,0 +1,196 @@
+---
+import { cabanasActivas } from '../lib/cabanas';
+import { site } from '../config';
+const cabanas = (await cabanasActivas()).map((c) => ({ id: c.id, nombre: c.data.nombre }));
+---
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Panel · {site.name}</title>
+  <style is:global>
+    :root { --bg:#140c0e; --card:#1c1013; --line:#3a2328; --ink:#fff8f8; --soft:#c9b3b6; --acc:#e8a08a; --ok:#2e7d4f; --bad:#a3243a; --warn:#b7791f; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui, Arial, sans-serif; }
+    main { max-width: 960px; margin: 0 auto; padding: 20px 16px 60px; }
+    h1 { font-size: 22px; margin: 0; } h2 { font-size: 16px; margin: 0 0 12px; }
+    .top { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:18px; flex-wrap:wrap; }
+    .kicker { font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--acc); margin:0 0 4px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; margin-bottom:12px; }
+    input, select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line); background:#140c0e; color:var(--ink); font:inherit; }
+    label { display:block; font-size:12px; color:var(--soft); margin-bottom:4px; }
+    .grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+    button { font:inherit; cursor:pointer; border:1px solid var(--line); background:transparent; color:var(--ink); padding:9px 16px; border-radius:999px; }
+    button.p { background:var(--acc); color:#2a1410; border-color:var(--acc); font-weight:600; }
+    button.ok { background:var(--ok); border-color:var(--ok); } button.bad { background:var(--bad); border-color:var(--bad); }
+    button:disabled { opacity:.5; cursor:wait; }
+    .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }
+    .tabs button.on { background:var(--ink); color:#140c0e; }
+    .row { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; }
+    .acts { display:flex; gap:8px; flex-wrap:wrap; }
+    .pill { display:inline-block; font-size:11px; padding:2px 9px; border-radius:999px; border:1px solid var(--line); color:var(--soft); }
+    .pill.pendiente { color:#f0c36b; border-color:#f0c36b; } .pill.confirmada { color:#7bd39a; border-color:#7bd39a; }
+    .pill.rechazada, .pill.cancelada { color:#e58a98; border-color:#e58a98; }
+    .muted { color:var(--soft); font-size:13px; } a { color:var(--acc); }
+    #msg { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); background:#fff8f8; color:#140c0e; padding:10px 18px; border-radius:999px; display:none; z-index:9; max-width:90vw; }
+    #msg.err { background:#ffd9df; color:#6b0f22; }
+    [hidden] { display:none !important; }
+  </style>
+</head>
+<body>
+<main id="app" data-cabanas={JSON.stringify(cabanas)}>
+  <section id="login" class="card" style="max-width:380px;margin:12vh auto 0">
+    <p class="kicker">{site.name}</p>
+    <h1>Panel del dueño</h1>
+    <form id="fLogin" style="margin-top:14px">
+      <label for="clave">Contraseña</label>
+      <input id="clave" type="password" autocomplete="current-password" required>
+      <button class="p" style="margin-top:12px;width:100%">Entrar</button>
+    </form>
+  </section>
+
+  <section id="panel" hidden>
+    <div class="top">
+      <div><p class="kicker">{site.name}</p><h1>Reservas</h1></div>
+      <div class="acts"><button id="bRef">Actualizar</button><button id="bSalir">Salir</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Agregar reserva o bloquear fechas</h2>
+      <form id="fNueva">
+        <div class="grid">
+          <div><label>Tipo</label><select name="tipo"><option value="manual">Reserva (ya acordada)</option><option value="bloqueo">Bloqueo (mantenimiento, uso propio…)</option></select></div>
+          <div><label>Cabaña</label><select name="cabana" id="selCab"></select></div>
+          <div><label>Llegada</label><input type="date" name="entrada" required></div>
+          <div><label>Salida</label><input type="date" name="salida" required></div>
+          <div class="solo-res"><label>Nombre del huésped</label><input name="nombre"></div>
+          <div class="solo-res"><label>Teléfono</label><input name="telefono" inputmode="tel"></div>
+          <div style="grid-column:1/-1"><label>Notas (opcional)</label><input name="notas" maxlength="500"></div>
+        </div>
+        <button class="p" style="margin-top:12px">Guardar</button>
+      </form>
+    </div>
+
+    <div class="tabs" id="tabs">
+      <button data-t="pend" class="on">Pendientes <span id="nPend"></span></button>
+      <button data-t="prox">Próximas</button>
+      <button data-t="hist">Historial</button>
+    </div>
+    <div id="lista"></div>
+  </section>
+</main>
+<div id="msg" role="status"></div>
+
+<script is:inline>
+(function () {
+  var app = document.getElementById('app');
+  var CAB = JSON.parse(app.dataset.cabanas);
+  var $ = function (s) { return document.querySelector(s); };
+  var token = ''; try { token = sessionStorage.getItem('matilde-admin') || ''; } catch (e) {}
+  var datos = [], hoy = '', tab = 'pend';
+
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+  var fecha = function (s) { var p = s.split('-'); return p[2] + '/' + p[1] + '/' + p[0]; };
+  var aviso = function (t, err) { var m = $('#msg'); m.textContent = t; m.className = err ? 'err' : ''; m.style.display = 'block'; clearTimeout(aviso.t); aviso.t = setTimeout(function () { m.style.display = 'none'; }, 3500); };
+
+  function api(body) {
+    return fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json().catch(function () { return { error: 'Respuesta no válida.' }; }).then(function (j) { j._s = r.status; return j; }); })
+      .catch(function () { return { error: 'Sin conexión.' }; });
+  }
+  function mostrar(logueado) { $('#login').hidden = logueado; $('#panel').hidden = !logueado; }
+  function salir() { token = ''; try { sessionStorage.removeItem('matilde-admin'); } catch (e) {} mostrar(false); }
+
+  $('#selCab').innerHTML = CAB.map(function (c) { return '<option value="' + esc(c.id) + '">' + esc(c.nombre) + '</option>'; }).join('');
+  var nombreCab = function (id) { var c = CAB.filter(function (x) { return x.id === id; })[0]; return c ? c.nombre : id; };
+
+  $('#fLogin').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var b = e.target.querySelector('button'); b.disabled = true;
+    api({ accion: 'login', clave: $('#clave').value }).then(function (j) {
+      b.disabled = false;
+      if (!j.ok) return aviso(j.error || 'No se pudo entrar.', true);
+      token = j.token; try { sessionStorage.setItem('matilde-admin', token); } catch (e2) {}
+      $('#clave').value = ''; cargar();
+    });
+  });
+
+  function cargar() {
+    return api({ accion: 'listar' }).then(function (j) {
+      if (j._s === 401) { salir(); if (token !== '') aviso('Sesión vencida.', true); return; }
+      if (!j.ok) { mostrar(true); return aviso(j.error || 'No se pudo cargar.', true); }
+      datos = j.items; hoy = j.hoy; mostrar(true); pintar();
+    });
+  }
+
+  function tarjeta(r) {
+    var tipo = r.tipo === 'bloqueo' ? 'Bloqueo' : r.tipo === 'manual' ? 'Manual' : 'Web';
+    var acts = '';
+    if (r.estado === 'pendiente') acts = '<button class="ok" data-a="confirmada">Confirmar</button><button class="bad" data-a="rechazada">Rechazar</button>';
+    else if (r.estado === 'confirmada') acts = '<button data-a="cancelada">Cancelar</button>';
+    else acts = '<button data-a="confirmada">Reactivar</button>';
+    acts += '<button data-a="eliminar">Eliminar</button>';
+    var det = [];
+    if (r.telefono) det.push('<a href="https://wa.me/' + esc(r.telefono.replace(/\D/g, '')) + '" target="_blank" rel="noopener">' + esc(r.telefono) + '</a>');
+    if (r.email) det.push(esc(r.email));
+    if (r.adultos || r.ninos) det.push(esc(r.adultos) + ' adultos' + (r.ninos ? ', ' + esc(r.ninos) + ' niños' : '') + (r.mascotas ? ', ' + esc(r.mascotas) + ' mascota/s' : ''));
+    if (r.total) det.push('Total $' + Number(r.total).toLocaleString('es-MX') + ' · adelanto $' + Number(r.adelanto).toLocaleString('es-MX'));
+    return '<article class="card" data-id="' + esc(r.id) + '"><div class="row"><div>' +
+      '<strong>' + esc(r.cabanaNombre || nombreCab(r.cabana)) + '</strong> <span class="pill ' + esc(r.estado) + '">' + esc(r.estado) + '</span> <span class="pill">' + tipo + '</span><br>' +
+      fecha(r.entrada) + ' → ' + fecha(r.salida) + ' · ' + r.noches + ' noche' + (r.noches === 1 ? '' : 's') + '<br>' +
+      '<span>' + esc(r.nombre) + '</span>' +
+      (det.length ? '<div class="muted">' + det.join(' · ') + '</div>' : '') +
+      (r.notas ? '<div class="muted">“' + esc(r.notas) + '”</div>' : '') +
+      '<div class="muted">' + esc(r.codigo) + '</div></div><div class="acts">' + acts + '</div></div></article>';
+  }
+
+  function pintar() {
+    var pend = datos.filter(function (r) { return r.estado === 'pendiente'; });
+    $('#nPend').textContent = pend.length ? '(' + pend.length + ')' : '';
+    var l;
+    if (tab === 'pend') l = pend.slice().sort(function (a, b) { return a.entrada.localeCompare(b.entrada); });
+    else if (tab === 'prox') l = datos.filter(function (r) { return r.estado === 'confirmada' && r.salida > hoy; }).sort(function (a, b) { return a.entrada.localeCompare(b.entrada); });
+    else l = datos.filter(function (r) { return r.estado !== 'pendiente' && !(r.estado === 'confirmada' && r.salida > hoy); }).sort(function (a, b) { return b.entrada.localeCompare(a.entrada); });
+    $('#lista').innerHTML = l.length ? l.map(tarjeta).join('') : '<p class="muted">No hay nada aquí.</p>';
+    document.querySelectorAll('#tabs button').forEach(function (b) { b.classList.toggle('on', b.dataset.t === tab); });
+  }
+
+  $('#tabs').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) { tab = b.dataset.t; pintar(); } });
+  $('#bRef').addEventListener('click', cargar);
+  $('#bSalir').addEventListener('click', salir);
+
+  $('#lista').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-a]'); if (!b) return;
+    var id = b.closest('[data-id]').dataset.id, a = b.dataset.a;
+    if (a === 'eliminar' && !confirm('¿Eliminar definitivamente? No se puede deshacer.')) return;
+    if (a === 'cancelada' && !confirm('¿Cancelar esta reserva? Las fechas quedan libres.')) return;
+    b.disabled = true;
+    var p = a === 'eliminar' ? { accion: 'eliminar', id: id } : { accion: 'estado', id: id, estado: a };
+    api(p).then(function (j) {
+      if (!j.ok) { b.disabled = false; return aviso(j.error || 'No se pudo.', true); }
+      aviso(a === 'eliminar' ? 'Eliminada.' : j.avisado ? 'Listo. Se avisó al huésped por correo.' : 'Listo.');
+      cargar();
+    });
+  });
+
+  var fN = $('#fNueva');
+  function tipoUI() { var bl = fN.tipo.value === 'bloqueo'; document.querySelectorAll('.solo-res').forEach(function (d) { d.hidden = bl; }); }
+  fN.tipo.addEventListener('change', tipoUI); tipoUI();
+  fN.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var b = fN.querySelector('button'); b.disabled = true;
+    api({ accion: 'crear', tipo: fN.tipo.value, cabana: fN.cabana.value, cabanaNombre: nombreCab(fN.cabana.value), entrada: fN.entrada.value, salida: fN.salida.value, nombre: fN.nombre.value, telefono: fN.telefono.value, notas: fN.notas.value })
+      .then(function (j) {
+        b.disabled = false;
+        if (!j.ok) return aviso(j.error || 'No se pudo guardar.', true);
+        aviso('Guardado. Las fechas quedaron bloqueadas.'); fN.reset(); tipoUI(); tab = 'prox'; cargar();
+      });
+  });
+
+  if (token) cargar();
+})();
+</script>
+</body>
+</html>
